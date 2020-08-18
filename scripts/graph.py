@@ -17,7 +17,7 @@ def assemble_adjacency_mtx(num_nodes_side,valves_dict):
     A = csc_matrix((vals, (rows, cols)), shape=(tot_vertices,tot_vertices))
     return A
 
-def bsf_tree(root,A):
+def bfs_tree(root,A):
     nids_to_explore = [root]
     component = []
     edges = []
@@ -25,13 +25,14 @@ def bsf_tree(root,A):
     while len(nids_to_explore):
         nid = nids_to_explore.pop()
         if nid not in component:
+            if (len(component)):
+                edges.append((component[-1],nid))
             component.append(nid)
         row = A[nid,:]
         linked_nids = np.nonzero(row)[1]
         for linked_nid in linked_nids:
             if linked_nid not in component:
                 nids_to_explore.append(linked_nid)
-                edges.append((nid,linked_nid))
     return component,edges
 
     
