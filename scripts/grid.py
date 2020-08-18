@@ -1,5 +1,5 @@
 import numpy as np
-from valves import * 
+from scripts.valves import * 
 
 def generate_base_node_sequence_row(N):
     row_nodes = np.zeros(2*N-2)
