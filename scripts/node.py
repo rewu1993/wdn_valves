@@ -148,9 +148,7 @@ class Node(object):
         return self.pipe_neighbors
     
     def degree(self):
-        d = 0
-        for pid in self.pipe_neighbors:
-            if pid!=None: d+=1
+        d = 4-sum(self.closed_pipes)
         return d
         
         
@@ -171,4 +169,6 @@ def get_nid2nodes(grid_size,nid2v_dict):
         node.adjust_neighbors(nid2v_dict)
         nid2nodes[nid] = node     
     return nid2nodes 
+
+   
     

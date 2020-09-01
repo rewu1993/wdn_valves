@@ -7,6 +7,8 @@ class Segment(object):
         self.sid = sid
         self.nids = []
         self.pids = []
+        self.ids = []
+       
     def __str__(self):  
         return "segment with sid %d, links to nid %s and pid %s " % (
             self.sid, str(self.nids),str(self.pids)  )  
@@ -75,13 +77,14 @@ class SegmentReport(object):
         return self.pipe_seg_report.stat
 
 
-def create_segment(vid, component,num_nodes):    
-    seg = Segment(vid)
-    for element in component:
-        if element < num_nodes:
-            seg.nids.append(element)
+def create_segment(sid, component,num_nodes):    
+    seg = Segment(sid)
+    for element_id in component:
+        seg.ids.append(element_id)
+        if element_id < num_nodes:
+            seg.nids.append(element_id)
         else:
-            seg.pids.append(element-num_nodes)
+            seg.pids.append(element_id-num_nodes)
     return seg
              
     

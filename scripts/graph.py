@@ -42,7 +42,7 @@ def bfs(A):
     components = []
     while len(nids):
         bfs_root = nids.pop()
-        component, _ = get_component(bfs_root,A)
+        component, _ = bfs_tree(bfs_root,A)
         nids -= set(component)
         components.append(component)
     return components
