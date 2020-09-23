@@ -80,6 +80,7 @@ def get_bfs_edges(A,nids2node):
     return edges
 
 def choose_pid2close(node,pid_blacklist):
+    np.random.seed()
     valid_pids = []
     pids = [pid for pid in node.pipe_neighbors if (pid != None and pid not in pid_blacklist) ]
     if len(pids):
@@ -98,11 +99,12 @@ class Mesh(object):
         self.valve_register = self._create_valveNregister()
         self.nid2nodes = self._create_nid2nodes()
         self.contraction_reg = ContractionRegister()
-        self._init_degree_distribution()
+        self.update_degree_distribution()
         
         self.adj_mtx_nodes = assemble_adjacency_mtx_nodes(self.nid2nodes)
         self.bfs_edges = get_bfs_edges(self.adj_mtx_nodes,self.nid2nodes)
         self.closed_pids = set()
+        self.N1_vids = set()
         
     def _create_valveNregister(self):
         valves = generate_valves_grid(self.grid_size)
@@ -160,6 +162,21 @@ class Mesh(object):
             vids2close.append(v1.vid)
             vids2close.append(v2.vid)
         return vids2close
+    
+    def _perform_N1(self,nid):
+        nid2valve = self.valve_register.nid2v
+        valves = nid2valve[nid]
+        valid_vids = self.valid_vids
+        valid_valves = [] 
+        
+        for valve in valves:
+            if (valve.vid in valid_vids):
+                valid_valves.append(valve)
+        valve2fail = np.random.choice(valid_valves, 1, replace=False)[0]
+        valve2fail.fail = True
+        valve2fail.keep_open = True
+        
+        self.N1_vids.add(valve2fail.vid)
              
     def get_closed_pids(self):
         return self.closed_pids
@@ -170,7 +187,7 @@ class Mesh(object):
     @property
     def valid_vids(self):
         topo_vids = set(self._vids2close()+self._vids2open())
-        valid_vids = list(set(self.valve_register.vid2v.keys())-topo_vids)
+        valid_vids = list(set(self.valve_register.vid2v.keys())-topo_vids-self.N1_vids)
         return valid_vids
     
     @property
@@ -198,7 +215,8 @@ class Mesh(object):
         self.valve_register.update_open_valves(self._vids2open()) #update valve register
         
     
-    def reduce_degree_num(self,degree,desired_num,max_steps = 1000):
+    def reduce_degree_num(self,degree,desired_num,max_steps = 1e3):
+        np.random.seed()
         self.update_degree_distribution()
         nids = self.degree_distribution[degree]
         step = 0
@@ -217,9 +235,120 @@ class Mesh(object):
         
         self.valve_register.update_closed_valves(self._vids2close()) #update valve register
     
-
-
-
-
+    def N1_setting(self):
+        valid_degrees = [3,4,5,6]
+        for valid_degree in valid_degrees:
+            nids = self.degree_distribution[valid_degree]
+            for nid in nids:
+                self._perform_N1(nid)
+                
+            
+            
         
+
+"""Functions to create mesh"""
+MESH_DEGREE_SETTINGS = {2:1,
+                       3:1,
+                       4:1,
+                       5:1,
+                       6:1}
+
+MESH_SETTINGS = {'grid_size': 10,
+                'contraction_ratio':0.,
+                'degree_settings':MESH_DEGREE_SETTINGS,
+                'N-1':False}
+
+
+def reduce_mesh_degree(mesh,degree_setting):
+    mesh.reduce_degree_num(6,int(len(mesh.degree_distribution[6])*degree_setting[6]))
+    mesh.reduce_degree_num(5,int(len(mesh.degree_distribution[5])*degree_setting[5]))
+    mesh.reduce_degree_num(4,int(len(mesh.degree_distribution[4])*degree_setting[4]))
+    mesh.reduce_degree_num(3,int(len(mesh.degree_distribution[3])*degree_setting[3]))
+    mesh.reduce_degree_num(2,int(len(mesh.degree_distribution[2])*degree_setting[2]))
+    return mesh
+
+def create_mesh(mesh_settings):
+    grid_size = mesh_settings['grid_size']
+    contraction_ratio = mesh_settings['contraction_ratio']
+    
+    mesh = Mesh(grid_size)
+    nids2identify = get_nids2identify(grid_size,contraction_ratio)
+    identify_pairs_op =  get_identify_pairs_op(nids2identify,mesh.nid2nodes)
+    mesh.perform_contractions(identify_pairs_op)
+    
+    mesh = reduce_mesh_degree(mesh,mesh_settings['degree_settings'])
+    if mesh_settings['N-1']:
+        mesh.N1_setting()
+    return mesh
+    
+def calculate_sparseness(mesh):
+    valid_pids = mesh.valid_pids
+    num_skeleton_pipes = len(mesh.bfs_edges)-len(mesh.get_open_pids())
+    num_grid_pipes = 2* (mesh.grid_size-1)*mesh.grid_size - len(mesh.get_open_pids())
+    sparseness = (len(valid_pids)-num_skeleton_pipes)/(num_grid_pipes-num_skeleton_pipes)
+    return sparseness
+    
+def generate_mesh_settings(grid_size,N1=False):
+    mesh_degree_settings = MESH_DEGREE_SETTINGS
+    mesh_settings = MESH_SETTINGS
+    
+    mesh_settings['grid_size'] = grid_size
+    mesh_settings['contraction_ratio'] = np.random.uniform(0,0.25)
+    mesh_settings['N-1'] = N1
+    
+    mesh_degree_settings[6] = generate_degree_ratio(6,0)
+    mesh_degree_settings[5] = generate_degree_ratio(5,0)
+    mesh_degree_settings[4] = generate_degree_ratio(4,0)
+    mesh_degree_settings[3] = generate_degree_ratio(3,0.2)
+#     mesh_degree_settings[2] = generate_degree_ratio(2,0.2)
+    
+    return mesh_settings
+
+def generate_sparse_mesh_settings(grid_size,N1=False):
+    mesh_degree_settings = MESH_DEGREE_SETTINGS
+    mesh_settings = MESH_SETTINGS
+    
+    mesh_settings['grid_size'] = grid_size
+    mesh_settings['contraction_ratio'] = np.random.uniform(0,0.25)
+    mesh_settings['N-1'] = N1
+    
+    mesh_degree_settings[6] = generate_degree_ratio(6,0,0.3)
+    mesh_degree_settings[5] = generate_degree_ratio(5,0,0.3)
+    mesh_degree_settings[4] = generate_degree_ratio(4,0,0.35)
+    mesh_degree_settings[3] = generate_degree_ratio(3,0,0.4)
+#     mesh_degree_settings[2] = generate_degree_ratio(2,0.2)
+    
+    return mesh_settings
+
+def generate_med_mesh_settings(grid_size,N1=False):
+    mesh_degree_settings = MESH_DEGREE_SETTINGS
+    mesh_settings = MESH_SETTINGS
+    
+    mesh_settings['grid_size'] = grid_size
+    mesh_settings['contraction_ratio'] = np.random.uniform(0,0.25)
+    mesh_settings['N-1'] = N1
+    
+    mesh_degree_settings[6] = generate_degree_ratio(6,0.3,0.8)
+    mesh_degree_settings[5] = generate_degree_ratio(5,0.4,0.8)
+    mesh_degree_settings[4] = generate_degree_ratio(4,0.4,0.8)
+    mesh_degree_settings[3] = generate_degree_ratio(3,0.4,0.8)
+#     mesh_degree_settings[2] = generate_degree_ratio(2,0.2)
+    
+    return mesh_settings
+
+def generate_high_mesh_settings(grid_size,N1=False):
+    mesh_degree_settings = MESH_DEGREE_SETTINGS
+    mesh_settings = MESH_SETTINGS
+    
+    mesh_settings['grid_size'] = grid_size
+    mesh_settings['contraction_ratio'] = np.random.uniform(0,0.25)
+    mesh_settings['N-1'] = N1
+    
+    mesh_degree_settings[6] = generate_degree_ratio(6,0.8,1)
+    mesh_degree_settings[5] = generate_degree_ratio(5,0.8,1)
+    mesh_degree_settings[4] = generate_degree_ratio(4,0.7,1)
+    mesh_degree_settings[3] = generate_degree_ratio(3,0.7,1)
+#     mesh_degree_settings[2] = generate_degree_ratio(2,0.2)
+    
+    return mesh_settings
        

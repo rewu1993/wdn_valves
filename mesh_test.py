@@ -55,6 +55,21 @@ class TestMesh(unittest.TestCase):
         # check valid pipes 
         self.assertEqual(len(self.mesh.valid_pids),11)
         
+    def test_n1_setting(self):
+        self.mesh.N1_setting()
+        nid2v = self.mesh.valve_register.nid2v
+        n4_valves = nid2v[4]
+        count = 0
+        for v in n4_valves:
+            if v.fail:
+                count +=1
+        self.assertEqual(count,1)   
+        
+        num_vids = len(self.mesh.N1_vids)
+        self.assertEqual(num_vids,5)   
+        
+        valid_vids = self.mesh.valid_vids
+        self.assertEqual(len(valid_vids),19)   
     
         
 if __name__ == '__main__':

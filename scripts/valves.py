@@ -1,5 +1,18 @@
 import numpy as np
 
+class Valve(object):
+    def __init__(self,vid,nid,pid):
+        self.vid = vid
+        self.nid = nid
+        self.pid = pid
+        self.fail = False
+        self.keep_open = False
+        self.keep_closed = False
+    def __str__(self):  
+        return "valve with vid %d, links to nid %d and pid %d, fail status %d " % (
+            self.vid, self.nid,self.pid,self.fail)
+    
+
 class ValveRegister(object):
     def __init__(self):  
         self.vid2v = {}
@@ -44,35 +57,7 @@ class ValveRegister(object):
     
     @property        
     def valid_vids(self):
-        return list(set(valve_register.vid2v.keys())-self.topo_vids)
+        return list(set(self.vid2v.keys())-self.topo_vids)
             
         
             
-class Valve(object):
-    def __init__(self,vid,nid,pid):
-        self.vid = vid
-        self.nid = nid
-        self.pid = pid
-        self.fail = False
-        self.keep_open = False
-        self.keep_closed = False
-    def __str__(self):  
-        return "valve with vid %d, links to nid %d and pid %d, fail status %d " % (
-            self.vid, self.nid,self.pid,self.fail)
-    
-    
-def register_valve(valve,valve_register):
-    valve_register.vid2v[valve.vid] = valve
-    
-    if not (valve.nid in valve_register.nid2v):
-        valve_register.nid2v[valve.nid] = []
-    valve_register.nid2v[valve.nid].append(valve)
-    
-    if not (valve.pid in valve_register.pid2v):
-        valve_register.pid2v[valve.pid] = []
-    valve_register.pid2v[valve.pid].append(valve)
-    
-def register_valves(valves,valve_register):
-    for valve in valves:
-        register_valve(valve,valve_register)
-        

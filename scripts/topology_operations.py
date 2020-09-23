@@ -34,10 +34,14 @@ def valid_nid(nid,nids2identify):
 def get_op_nid2identify(node,nids2identify):
     op = rand_operation()
     candidate = potential_identify_id(node,op)
-    
+    max_step = 1e3
+    step = 0
     while not valid_nid(candidate, nids2identify):
         op = rand_operation()
         candidate = potential_identify_id(node,op)
+        step+=1 
+        if step > max_step:
+            raise Exception('fail to contract')
     return op,candidate
         
 def get_valves2open(node1,node2,op):

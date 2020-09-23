@@ -1,6 +1,7 @@
 import numpy as np
 from scripts.grid import * 
 from scripts.graph import *
+from scipy.sparse import lil_matrix
 
 class Segment(object):
     def __init__(self, sid):
@@ -59,24 +60,6 @@ class PipeSegmentReport(object):
 #         average_num_pipes {}, average_num_multipipe is {}, \
 #         prob to multiseg {}" 
 
-class SegmentReport(object):
-    def __init__(self,grid_size):
-        self.grid_size = grid_size
-        self.num_sim = 0
-        self.num_segments = []
-        self.pipe_seg_report = PipeSegmentReport(grid_size)
-    
-    def __str__(self):  
-        pipe_seg_ratio = self.num_pipe_segments/self.num_pipes
-#         print (self.pipe_seg_report)
-        return "pipes number:  %d, segment number: %d, pipe segment number %d, pipe_seg_ratio is %f" % (
-            self.num_pipes, self.num_segments,self.num_pipe_segments, pipe_seg_ratio)  
-
-    def get_segments_stats(self):
-        self.pipe_seg_report.update_stat()
-        return self.pipe_seg_report.stat
-
-
 def create_segment(sid, component,num_nodes):    
     seg = Segment(sid)
     for element_id in component:
@@ -96,13 +79,6 @@ def find_segments(A, num_nodes):
         segments.append(segment)
     return segments
 
-
-def fail_valves(valves_dict, vids2fail):
-    for vid,v in valves_dict.items():
-        if vid in vids2fail:
-            v.fail = True
-    return valves_dict
-
 def update_segment_report(segments,report):
     report.num_sim += 1
     report.num_segments.append(len(segments)) 
@@ -113,77 +89,130 @@ def update_segment_report(segments,report):
             pipe_segments.append(segment)
     report.pipe_seg_report.pipe_segments.append(pipe_segments)
     return report
+
+class SegmentReport(object):
+    def __init__(self,grid_size):
+        self.grid_size = grid_size
+        self.num_sim = 0
+        self.segments = {}
+        self.segment_graph = None
     
-def simulate_segments(grid_size,valves_dict):
-    A = assemble_adjacency_mtx(grid_size,valves_dict)
-    segments = find_segments(A,grid_size*grid_size)
-    return segments
+    def __str__(self):  
+        pipe_seg_ratio = self.num_pipe_segments/self.num_pipes
+#         print (self.pipe_seg_report)
+        return "pipes number:  %d, segment number: %d, pipe segment number %d, pipe_seg_ratio is %f" % (
+            self.num_pipes, self.num_segments,self.num_pipe_segments, pipe_seg_ratio)  
+
+    def get_segments_stats(self,trivial_pids = {}):
+        self.pipe_seg_report.update_stat(trivial_pids)
+        return self.pipe_seg_report.stat
+    
+    
+class SegmentSummary(object):
+    def __init__(self,num_nodes,segments,A_diff,num_closed_pipes = 0):
+        self.num_nodes = num_nodes
+        self.segments = segments
+        self.num_closed_pipes = num_closed_pipes
+        self.pipe_sids = self._get_pipe_seg_ids()
+        self.id2sid = self._get_id2sid()
+        
+        self.segment_graph = self.convert2seg_graph(A_diff)
+        
+    def _get_pipe_seg_ids(self):
+        sids = []
+        for seg in self.segments:
+            if len(seg.pids):
+                sids.append(seg.sid)
+        return sids
+    
+    def _get_id2sid(self):
+        id2sid ={}
+        for sid, seg in enumerate(self.segments):
+            for id in seg.ids:
+                id2sid[id] = sid
+        return id2sid
+    
+    def convert2seg_graph(self,A_diff):
+        segment_graph = lil_matrix((len(self.segments), len(self.segments)), 
+                                   dtype=np.int8)
+        for i in range(A_diff.shape[0]):
+            searching_sid = self.id2sid[i]
+            nearby_ids = np.nonzero(A_diff[i,:])[1]
+            for nearby_id in nearby_ids:
+                nearby_sid = self.id2sid[nearby_id]
+                segment_graph[searching_sid,nearby_sid] = 1  
+                segment_graph[nearby_sid,searching_sid] = 1  
+        return segment_graph
+    
+    
+    def _get_unintend_consequence(self,segment_graph,iso_sids):
+        components = bfs(segment_graph)
+        unintend_consequence = 0
+        for iso_component in components[1:]:
+            for sid in iso_component:
+                if sid not in iso_sids:
+                    seg = self.segments[sid]
+                    unintend_consequence += len(seg.pids)
+#         print (iso_sids,components[0],unintend_consequence,self.num_closed_pipes)
+        unintend_consequence -= self.num_closed_pipes
+        
+        return unintend_consequence
+        
+    def _iso_on_segment_graph(self,segment_graph,sid):
+        segment_graph[sid,:] = 0
+        segment_graph[:,sid] = 0
+        return segment_graph
+    
+    def _iso_consequence(self,sids):
+        segment_graph = self.segment_graph.copy()
+        direct_consequence = 0
+        for sid in sids:
+            seg = self.segments[sid]
+            direct_consequence += len(seg.pids)
+            segment_graph = self._iso_on_segment_graph(segment_graph,sid)
+        unintend_consequence = self._get_unintend_consequence(segment_graph,sids)
+        return direct_consequence,unintend_consequence
+        
+    
+    def pipe_iso_consequences(self,pids):
+        direct_consequences = []
+        unintend_consequences = []
+        for pid in pids:
+            id = self.num_nodes + pid
+            sid = self.id2sid[id]
+            direct,unintened = self._iso_consequence([sid])
+            direct_consequences.append(direct)
+            unintend_consequences.append(unintened)
+        return np.array(direct_consequences),np.array(unintend_consequences)
+            
+                
+    def _multi_pipe_iso_consequence(self,pids2close):
+        sids = []
+        for pid in pids2close:
+            id = self.num_nodes + pid
+            sids.append(self.id2sid[id])
+        return self._iso_consequence(sids)
+    
+    
+    def multi_pipe_iso_consequences(self,valid_pids,degree,num_sim = 100):
+        np.random.seed()
+        pids2close_pool = [np.random.choice(list(valid_pids),degree,replace = False) for _ in range(num_sim)]
+        directs, unintends = [], []
+        for pids2close in pids2close_pool:
+            direct, unintend = self._multi_pipe_iso_consequence(pids2close)
+            directs.append(direct)
+            unintends.append(unintend)
+        return np.mean(directs),np.mean(unintends)
 
 
-def generate_valves_dict(valve_register,x,fail_rate):
-    valve_register.recover_valves()
-    if x == 0:
-        vids2fail = generate_vids2fail(list(valve_register.vid2v.keys()),fail_rate)
-    else:
-        # N-x setting 
-        config_fvids,remained_vids = generate_nx_config(valve_register,x)
-        vids2fail = generate_vids2fail(remained_vids,fail_rate)
-        vids2fail+= config_fvids
-    valves_dict = fail_valves(valve_register.vid2v,vids2fail)
-    return valves_dict
+
     
 
-def generate_sim_report_nx(grid_size,num_simulation,x,fail_rate):
-    report = SegmentReport(grid_size)
-    valves = generate_valves_grid(grid_size)
-    valve_register = ValveRegister()
-    register_valves(valves,valve_register)
-    for i in range(num_simulation):
-        valves_dict = generate_valves_dict(valve_register,x,fail_rate)
-        segments = simulate_segments(grid_size,valves_dict)
-        report = update_segment_report(segments,report)
-    return report
 
-def generate_nx_config(valve_register,x):
-    nid2valve = valve_register.nid2v
-    vids2fail = []
-    for _,valves in nid2valve.items():
-        removed_valves = np.random.choice(valves, x, replace=False)
-        for removed_valve in removed_valves:
-            vids2fail.append(removed_valve.vid)
-    
-    vids = valve_register.vid2v.keys()
-    remained_vids = list(set(vids)-set(vids2fail))
-
-    return vids2fail,remained_vids
-
-def generate_vids2fail(vids,fail_rate):
-    num_failed_valves = int(fail_rate*len(vids))
-    rand_fvids = list(np.random.choice(vids, num_failed_valves, replace=False))
-    return rand_fvids
-
-def get_simulation_results(reports):
-    ave_num_segments = []
-    ave_seg_pipe_size = []
-    ave_max_pipe_seg = []
-    for report in reports:
-        stat = report.get_segments_stats()
-        ave_num_segments.append(stat.num_multi_pipe_seg)
-        ave_seg_pipe_size.append(np.mean(stat.seg_sizes_mean))
-        ave_max_pipe_seg.append(np.mean(stat.seg_sizes_max))
-    return ave_num_segments,ave_seg_pipe_size,ave_max_pipe_seg
-
-def get_simulation_results(reports):
-    ave_num_segments = []
-    ave_seg_pipe_size = []
-    ave_max_pipe_seg = []
-    for report in reports:
-        stat = report.get_segments_stats()
-        ave_num_segments.append(stat.num_multi_pipe_seg)
-        ave_seg_pipe_size.append(np.mean(stat.seg_sizes_mean))
-        ave_max_pipe_seg.append(np.mean(stat.seg_sizes_max))
-    return ave_num_segments,ave_seg_pipe_size,ave_max_pipe_seg
         
         
-    
+
+
+
+   
 
