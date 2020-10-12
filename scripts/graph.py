@@ -1,22 +1,6 @@
 import numpy as np
 from scipy.sparse import csc_matrix
 
-# def assemble_adjacency_mtx(num_nodes_side,valves_dict):
-#     tot_nodes = num_nodes_side*num_nodes_side
-#     tot_pipes = 2*(num_nodes_side-1)*num_nodes_side
-#     tot_vertices = tot_nodes+tot_pipes
-#     rows,cols = [],[]
-    
-#     for vid,valve in valves_dict.items():
-#         if valve.fail:
-#             rows.append(valve.nid)
-#             cols.append(valve.pid+tot_nodes)
-#             rows.append(valve.pid+tot_nodes)
-#             cols.append(valve.nid)
-#     vals = 1+np.zeros(len(rows))
-#     A = csc_matrix((vals, (rows, cols)), shape=(tot_vertices,tot_vertices))
-#     return A
-
 def assemble_adjacency_mtx(nnodes,npipes,valves_dict):
     tot_vertices = nnodes+npipes
     rows,cols = [],[]
@@ -29,7 +13,14 @@ def assemble_adjacency_mtx(nnodes,npipes,valves_dict):
     vals = 1+np.zeros(len(rows))
     A = csc_matrix((vals, (rows, cols)), shape=(tot_vertices,tot_vertices))
     return A
-    
+
+
+def create_adj_mtx(vstates):
+    nnodes = len(vstates.vreg.nid2v)
+    npipes = len(vstates.vreg.pid2v)
+    vdict = vstates.get_valve_dict()
+    A = assemble_adjacency_mtx(nnodes, npipes, vdict)
+    return A
 
 def explore_current_level(current_level,A,component):
     next_level = []
@@ -42,17 +33,6 @@ def explore_current_level(current_level,A,component):
                 component.add(linked_nid)
     return next_level
 
-def bfs_levels(root,A):
-    init_level = [root]
-    levels = [init_level]
-    component = set(init_level)
-    next_level = explore_current_level(init_level,A,component)
-    while len(next_level):
-        current_level = next_level
-        levels.append(current_level)
-        next_level = explore_current_level(current_level,A,component)
-    return levels
-        
 
 def bfs_tree(root,A):
     nids_to_explore = [root]
@@ -66,7 +46,11 @@ def bfs_tree(root,A):
                 edges.append((component[-1],nid))
             component.append(nid)
         row = A[nid,:]
-        linked_nids = np.nonzero(row)[1]
+        try:
+            linked_nids = np.nonzero(row)[1]
+        except:
+            linked_nids = np.nonzero(row)[0]
+            
         for linked_nid in linked_nids:
             if linked_nid not in component:
                 nids_to_explore.append(linked_nid)
@@ -83,3 +67,4 @@ def bfs(A):
         nids -= set(component)
         components.append(component)
     return components
+
