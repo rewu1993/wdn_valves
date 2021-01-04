@@ -1,7 +1,6 @@
 """
 Test the wntr.network.elements classes
 """
-from __future__ import print_function
 import nose.tools
 from nose import SkipTest
 from nose.tools import *
@@ -70,19 +69,19 @@ def test_Pattern():
     nose.tools.assert_equal(pattern2a[2], expected_value)
     nose.tools.assert_equal(pattern2b.at(10), expected_value)
     nose.tools.assert_equal(pattern2b.at(12.5), expected_value)
-    nose.tools.assert_equal(pattern2b(14), expected_value)
-    nose.tools.assert_equal(pattern2b(9*5), expected_value)
+    nose.tools.assert_equal(pattern2b.at(14), expected_value)
+    nose.tools.assert_equal(pattern2b.at(9*5), expected_value)
     nose.tools.assert_not_equal(pattern2b.at(15), expected_value)
     
     pattern3 = elements.Pattern('nowrap', multipliers=pattern_points2, time_options=(0, 100), wrap=False)
     nose.tools.assert_equal(pattern3[5], 0.0)
     nose.tools.assert_equal(pattern3[-39], 0.0)
-    nose.tools.assert_equal(pattern3(-39), 0.0)
+    nose.tools.assert_equal(pattern3.at(-39), 0.0)
     nose.tools.assert_equal(pattern3.at(50), 1.0)
     
     pattern4 = elements.Pattern('constant')
     nose.tools.assert_equal(len(pattern4), 0)
-    nose.tools.assert_equal(pattern4(492), 1.0)
+    nose.tools.assert_equal(pattern4.at(492), 1.0)
     
     pattern5a = elements.Pattern('binary', [0.,0.,1.,1.,1.,1.,0.,0.,0.], time_options=(0, 1), wrap=False)
     pattern5b = elements.Pattern.binary_pattern('binary', step_size=1, start_time=2, end_time=6, duration=9)
@@ -118,12 +117,12 @@ def test_TimeSeries():
     nose.tools.assert_equals(tvv1.category, 'binary')
     
     # Test getitem
-    print(tvv1)
-    print(tvv2, pattern2)
+    #print(tvv1)
+    #print(tvv2, pattern2)
     nose.tools.assert_equals(tvv1.at(1), 0.0)
     nose.tools.assert_equals(tvv1.at(7202), 3.0)
     nose.tools.assert_equals(tvv2.at(1), 2.0)
-    print(tvv2, pattern2.time_options)
+    #print(tvv2, pattern2.time_options)
     nose.tools.assert_equals(tvv2.at(3602), 2.4)
     
     price1 = elements.TimeSeries(wn.patterns, 35.0, None)
@@ -206,10 +205,33 @@ def test_Demands():
     nose.tools.assert_list_equal(demandlist1.pattern_list(), [pattern1, pattern2, pattern2])
     nose.tools.assert_list_equal(demandlist1.pattern_list(category='residential'), [pattern2, pattern2])
     nose.tools.assert_list_equal(demandlist1.category_list(), ['_base_demand','residential','residential'])    
+
+def test_fire_fighting_demand():
+    # Setup network
+    wn = wntr.network.WaterNetworkModel()
+    wn.add_junction('new_junction', base_demand=1, elevation=10,
+                    coordinates=(6, 25))
+    duration = 1*5*60*60
+    wn.options.time.duration = duration
+    
+    # Add fire demand
+    node = wn.get_node('new_junction')
+    fire_flow_demand = 0.252
+    fire_start = 2*60*60
+    fire_end = 4*60*60
+    node.add_fire_fighting_demand(wn, fire_flow_demand, fire_start, fire_end)
+    ff_demand = list(wntr.metrics.hydraulic.expected_demand(wn)['new_junction'].values)
+    expected_ff_demand = [1, 1, 1.252, 1.252, 1, 1]
+    nose.tools.assert_list_equal(ff_demand, expected_ff_demand)
+    
+    # Remove fire demand
+    node.remove_fire_fighting_demand(wn)
+    nose.tools.assert_true(not('Fire_Flow' in node.demand_timeseries_list.category_list()))
     
 
 def test_Enums():
     pass
 
-if __name__ == '__main__':
-    test_Demands()
+#if __name__ == '__main__':
+    # test_Demands()
+    # test_fire_fighting_demand()

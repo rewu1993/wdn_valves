@@ -1,10 +1,7 @@
 import sys
-if sys.version_info.major == 2:
-    from collections import MutableSet
-else:
-    from collections.abc import MutableSet
+from collections.abc import MutableSet
 from collections import OrderedDict
-from collections import Iterable
+from collections.abc import Iterable
 
 
 class OrderedSet(MutableSet):
@@ -74,3 +71,15 @@ class OrderedSet(MutableSet):
 
     def __str__(self):
         return self.__repr__()
+
+    def union(self, iterable):
+        ret = OrderedSet(self)
+        for i in iterable:
+            ret.add(i)
+        return ret
+
+    def __sub__(self, other):
+        ret = OrderedSet(self)
+        for i in other:
+            ret.discard(i)
+        return ret

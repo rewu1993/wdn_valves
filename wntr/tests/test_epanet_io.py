@@ -16,16 +16,14 @@ class TestWriter(unittest.TestCase):
 
         inp_file = join(test_datadir, 'io.inp')
         self.wn = self.wntr.network.WaterNetworkModel(inp_file)
-        self.wn.write_inpfile('_io_copy.inp', 'GPM')
-        self.wn2 = self.wntr.network.WaterNetworkModel('_io_copy.inp')
+        self.wn.write_inpfile('temp.inp', 'GPM')
+        self.wn2 = self.wntr.network.WaterNetworkModel('temp.inp')
 
     @classmethod
     def tearDownClass(self):
         pass
 
     def test_all(self):
-        if sys.version_info.major < 3:
-            raise nose.SkipTest # skip if python version < 3
         self.assertTrue(self.wn._compare(self.wn2))
 
     def test_pipe_minor_loss(self):
@@ -70,7 +68,25 @@ class TestWriter(unittest.TestCase):
     def test_controls(self):
         for name, control in self.wn.controls():
             self.assertTrue(control._compare(self.wn2.get_control(name)))
-
+        
+    def test_demands(self):
+        # In EPANET, the [DEMANDS] section overrides demands specified in [JUNCTIONS]
+        expected_length = {'j1': 2, # DEMANDS duplicates demand in JUNCTIONS
+                           'j2': 2, # DEMANDS does not duplicate demand in JUNCTIONS
+                           'j3': 1, # Only in JUNCTIONS
+                           'j4': 1} # Only in DEMANDS
+        for j_name, j in self.wn.junctions():
+            j2 = self.wn2.get_node(j_name)
+            assert len(j.demand_timeseries_list) == len(j2.demand_timeseries_list)
+            self.assertEqual(expected_length[j_name], len(j2.demand_timeseries_list))
+            for d, d2 in zip(j.demand_timeseries_list, j2.demand_timeseries_list):
+                self.assertEqual(d, d2)
+                # DEMANDS use pattern2, JUNCTIONS demands use pattern1
+                if j_name in ['j1', 'j2', 'j4']:    
+                    self.assertEqual(d2.pattern_name, 'pattern2') 
+                else:
+                    self.assertEqual(d2.pattern_name, 'pattern1') 
+                
 
 class TestInpFileWriter(unittest.TestCase):
 
@@ -80,7 +96,7 @@ class TestInpFileWriter(unittest.TestCase):
         self.wntr = wntr
         inp_file = join(test_datadir, 'Net6_plus.inp') # UNITS = GPM
         self.wn = wntr.network.WaterNetworkModel(inp_file)
-        self.wn.write_inpfile('tmp.inp', units='LPM')
+        self.wn.write_inpfile('temp.inp', units='LPM')
         self.wn2 = self.wntr.network.WaterNetworkModel(inp_file)
 
     @classmethod
@@ -88,8 +104,6 @@ class TestInpFileWriter(unittest.TestCase):
         pass
 
     def test_wn(self):
-        if sys.version_info.major < 3:
-            raise nose.SkipTest # skip if python version < 3
         self.assertTrue(self.wn._compare(self.wn2))
 
     def test_junctions(self):
@@ -158,6 +172,28 @@ class TestInpFileWriter(unittest.TestCase):
             self.assertTrue(control._compare(self.wn2.get_control(name)))
 
 
+class TestInp22FileWriter(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(self):
+        import wntr
+        self.wntr = wntr
+        inp_file = join(test_datadir, 'Net6_plus.inp') # UNITS = GPM
+        self.wn = wntr.network.WaterNetworkModel(inp_file)
+        self.wn.options.hydraulic.demand_model = 'PDA'
+        self.wn.options.hydraulic.required_pressure = 1.0
+        self.wn.write_inpfile('temp2.inp', units='LPM')
+        self.wn2 = self.wntr.network.WaterNetworkModel('temp2.inp')
+
+    @classmethod
+    def tearDownClass(self):
+        pass
+
+    def test_pda(self):
+        self.assertTrue(self.wn2.options.hydraulic.demand_model == 'PDA')
+        self.assertTrue(self.wn.options.hydraulic.required_pressure == 1.0)
+
+
 class TestNet3InpWriterResults(unittest.TestCase):
 
     @classmethod
@@ -171,12 +207,18 @@ class TestNet3InpWriterResults(unittest.TestCase):
         sim = self.wntr.sim.EpanetSimulator(self.wn)
         self.results = sim.run_sim()
 
-        self.wn.write_inpfile('tmp.inp')
-        self.wn2 = self.wntr.network.WaterNetworkModel('tmp.inp')
+        self.wn.write_inpfile('temp.inp')
+        self.wn2 = self.wntr.network.WaterNetworkModel('temp.inp')
 
         sim = self.wntr.sim.EpanetSimulator(self.wn2)
         self.results2 = sim.run_sim()
         
+        self.wn.write_inpfile('temp.inp')
+        self.wn22 = self.wntr.network.WaterNetworkModel('temp.inp')
+        self.wn22.options.hydraulic.demand_model = 'PDA'
+
+        sim = self.wntr.sim.EpanetSimulator(self.wn22)
+        self.results22 = sim.run_sim(version=2.2)
         
 
     @classmethod
@@ -187,21 +229,25 @@ class TestNet3InpWriterResults(unittest.TestCase):
         for link_name, link in self.wn.links():
             for t in self.results2.link['flowrate'].index:
                 self.assertLessEqual(abs(self.results2.link['flowrate'].loc[t,link_name] - self.results.link['flowrate'].loc[t,link_name]), 0.00001)
+                self.assertLessEqual(abs(self.results22.link['flowrate'].loc[t,link_name] - self.results.link['flowrate'].loc[t,link_name]), 0.00001)
 
     def test_node_demand(self):
         for node_name, node in self.wn.nodes():
             for t in self.results2.node['demand'].index:
                 self.assertAlmostEqual(self.results2.node['demand'].loc[t,node_name], self.results.node['demand'].loc[t,node_name], 4)
+                self.assertAlmostEqual(self.results22.node['demand'].loc[t,node_name], self.results.node['demand'].loc[t,node_name], 4)
 
     def test_node_head(self):
         for node_name, node in self.wn.nodes():
             for t in self.results2.node['head'].index:
                 self.assertLessEqual(abs(self.results2.node['head'].loc[t,node_name] - self.results.node['head'].loc[t,node_name]), 0.01)
+                self.assertLessEqual(abs(self.results22.node['head'].loc[t,node_name] - self.results.node['head'].loc[t,node_name]), 0.01)
 
     def test_node_pressure(self):
         for node_name, node in self.wn.nodes():
             for t in self.results2.node['pressure'].index:
                 self.assertLessEqual(abs(self.results2.node['pressure'].loc[t,node_name] - self.results.node['pressure'].loc[t,node_name]), 0.05)
+                self.assertLessEqual(abs(self.results22.node['pressure'].loc[t,node_name] - self.results.node['pressure'].loc[t,node_name]), 0.05)
 
 
 class TestNet3InpUnitsResults(unittest.TestCase):
@@ -217,8 +263,8 @@ class TestNet3InpUnitsResults(unittest.TestCase):
         sim = self.wntr.sim.EpanetSimulator(self.wn)
         self.results = sim.run_sim()
 
-        self.wn.write_inpfile('tmp_units.inp', units='CMH')
-        self.wn2 = self.wntr.network.WaterNetworkModel('tmp_units.inp')
+        self.wn.write_inpfile('temp.inp', units='CMH')
+        self.wn2 = self.wntr.network.WaterNetworkModel('temp.inp')
 
         sim = self.wntr.sim.EpanetSimulator(self.wn2)
         self.results2 = sim.run_sim()

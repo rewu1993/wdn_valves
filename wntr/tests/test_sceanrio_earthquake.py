@@ -1,4 +1,3 @@
-from __future__ import print_function
 from nose.tools import *
 from os.path import abspath, dirname, join
 import numpy as np
@@ -22,7 +21,7 @@ def test_distance_to_epicenter():
     expected = np.sqrt(np.power(50-40,2)+np.power(70-55,2))
     assert_less(np.abs(R['12']-expected), 1E-5) 
 
-    wn.scale_node_coordinates(100)
+    wn = wntr.morph.scale_node_coordinates(wn,100)
     R = earthquake.distance_to_epicenter(wn,wntr.network.Junction)
     expected = np.sqrt(np.power(5000-40,2)+np.power(7000-55,2))
     assert_less(np.abs(R['12']-expected), 1E-5) 
@@ -44,19 +43,19 @@ def test_pga_attenuation():
     earthquake = wntr.scenario.Earthquake((0, 0), 5, 10000.0)
     
     pga = earthquake.pga_attenuation_model(R, method=1)
-    print(pga['1'])
+    #print(pga['1'])
     assert_less(np.abs(pga['1']-1.3275E-1), 1E-5) 
     
     pga = earthquake.pga_attenuation_model(R, method=2)
-    print(pga['1'])
+    #print(pga['1'])
     assert_less(np.abs(pga['1']-9.6638E-2), 1E-6) 
     
     pga = earthquake.pga_attenuation_model(R, method=3)
-    print(pga['1'])
+    #print(pga['1'])
     assert_less(np.abs(pga['1']-1.2789E-3), 1E-7) 
     
     pga = earthquake.pga_attenuation_model(R)
-    print(pga['1'])
+    #print(pga['1'])
     assert_less(np.abs(pga['1']-7.6887E-2), 1E-6) 
     
 def test_pgv_attenuation():

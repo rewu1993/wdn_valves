@@ -243,12 +243,16 @@ class _ControlType(enum.Enum):
     postsolve = 1
     rule = 2
     pre_and_postsolve = 3
+    feasibility = 4  # controls necessary to ensure the problem being solved is feasible
 
 
 class ControlCondition(six.with_metaclass(abc.ABCMeta, object)):
     """A base class for control conditions"""
     def __init__(self):
         self._backtrack = 0
+
+    def _reset(self):
+        pass
 
     @abc.abstractmethod
     def requires(self):
@@ -736,7 +740,7 @@ class ValueCondition(ControlCondition):
         if np.isnan(self._threshold):
             relation = np.greater
             thresh_value = 0.0
-        state = relation(cur_value, thresh_value)
+        state = relation(np.round(cur_value,10), np.round(thresh_value,10))
         return bool(state)
 
 
@@ -751,6 +755,11 @@ class TankLevelCondition(ValueCondition):
             raise ValueError('TankLevelConditions only support <= and >= relations.')
         super(TankLevelCondition, self).__init__(source_obj, source_attr, relation, threshold)
         assert source_attr in {'level', 'pressure', 'head'}
+        # this is used to see if backtracking is needed
+        self._last_value = getattr(self._source_obj, self._source_attr)  
+
+
+    def _reset(self):
         self._last_value = getattr(self._source_obj, self._source_attr)  # this is used to see if backtracking is needed
 
     def _compare(self, other):
@@ -777,7 +786,7 @@ class TankLevelCondition(ValueCondition):
 
     def evaluate(self):
         self._backtrack = 0  # no backtracking is needed unless specified in the if statement below
-        cur_value = getattr(self._source_obj, self._source_attr)  # get the current tank level
+        cur_value = getattr(self._source_obj, self._source_attr)  # get the current tank level, head, or pressure
         thresh_value = self._threshold
         relation = self._relation
         if relation is Comparison.gt:
@@ -787,8 +796,8 @@ class TankLevelCondition(ValueCondition):
         if np.isnan(self._threshold):  # what is this doing?
             relation = np.greater
             thresh_value = 0.0
-        state = relation(cur_value, thresh_value)  # determine if the condition is satisfied
-        if state and not relation(self._last_value, thresh_value):
+        state = relation(np.round(cur_value,10), np.round(thresh_value,10))  # determine if the condition is satisfied
+        if state and not relation(np.round(self._last_value,10), np.round(thresh_value,10)):
             # if the condition is satisfied and the last value did not satisfy the condition, then backtracking
             # is needed.
             # The math.floor is not actually needed, but I leave it here for clarity. We want the backtrack value to be
@@ -796,8 +805,28 @@ class TankLevelCondition(ValueCondition):
             # be slightly later than when the tank level hits the threshold. This ensures the tank level will go
             # slightly beyond the threshold. This ensures that relation(self._last_value, thresh_value) will be True
             # next time. This prevents us from computing very small backtrack values over and over.
-            if self._source_obj.demand != 0:
-                self._backtrack = int(math.floor((cur_value - thresh_value)*math.pi/4.0*self._source_obj.diameter**2/self._source_obj.demand))
+            if self._source_obj.demand != 0 and not self._source_obj.demand is None:
+                if self._source_obj.vol_curve is None:
+                    self._backtrack = int(math.floor((cur_value - thresh_value)
+                             *math.pi/4.0*self._source_obj.diameter**2
+                             /self._source_obj.demand))
+                else: # a volume curve must be used instead
+                    if self._source_attr == 'head':
+                        thresh_level = thresh_value - self._source_obj.elevation
+                        level = cur_value - self._source_obj.elevation
+                    elif self._source_attr == 'level':
+                        thresh_level = thresh_value
+                        level = cur_value
+                    else:
+                        raise NotImplementedError("Pressure tank value conditions with a " + 
+                                                     "volume curve have not been implemented.")
+                    
+                    cur_value_volume = self._source_obj.get_volume(level)
+                    thresh_volume = self._source_obj.get_volume(thresh_level)
+                    
+                    self._backtrack = int(math.floor((cur_value_volume 
+                                                      - thresh_volume) 
+                                                      / self._source_obj.demand))
         self._last_value = cur_value  # update the last value
         return bool(state)
 
@@ -920,17 +949,19 @@ class OrCondition(ControlCondition):
         self._condition_1 = cond1
         self._condition_2 = cond2
 
-        if isinstance(cond1, (TimeOfDayCondition, SimTimeCondition, ValueCondition, TankLevelCondition,
-                              RelativeCondition)):
+        if isinstance(cond1, TankLevelCondition):
             if cond1._relation is Comparison.eq:
                 logger.warning('Using Comparison.eq with {0} will probably not work!'.format(type(cond1)))
                 warnings.warn('Using Comparison.eq with {0} will probably not work!'.format(type(cond1)))
 
-        if isinstance(cond2, (TimeOfDayCondition, SimTimeCondition, ValueCondition, TankLevelCondition,
-                              RelativeCondition)):
+        if isinstance(cond2, TankLevelCondition):
             if cond2._relation is Comparison.eq:
                 logger.warning('Using Comparison.eq with {0} will probably not work!'.format(type(cond2)))
                 warnings.warn('Using Comparison.eq with {0} will probably not work!'.format(type(cond2)))
+
+    def _reset(self):
+        self._condition_1._reset()
+        self._condition_2._reset()
 
     def _compare(self, other):
         """
@@ -964,7 +995,9 @@ class OrCondition(ControlCondition):
         return np.max([self._condition_1.backtrack, self._condition_2.backtrack])
 
     def requires(self):
-        return self._condition_1.requires().update(self._condition_2.requires())
+        req = self._condition_1.requires()
+        req.update(self._condition_2.requires())
+        return req
 
 
 @DocInheritor({'requires', 'evaluate', 'backtrack'})
@@ -982,17 +1015,19 @@ class AndCondition(ControlCondition):
         self._condition_1 = cond1
         self._condition_2 = cond2
 
-        if isinstance(cond1, (TimeOfDayCondition, SimTimeCondition, ValueCondition, TankLevelCondition,
-                              RelativeCondition)):
+        if isinstance(cond1, TankLevelCondition):
             if cond1._relation is Comparison.eq:
                 logger.warning('Using Comparison.eq with {0} will probably not work!'.format(type(cond1)))
                 warnings.warn('Using Comparison.eq with {0} will probably not work!'.format(type(cond1)))
 
-        if isinstance(cond2, (TimeOfDayCondition, SimTimeCondition, ValueCondition, TankLevelCondition,
-                              RelativeCondition)):
+        if isinstance(cond2, TankLevelCondition):
             if cond2._relation is Comparison.eq:
                 logger.warning('Using Comparison.eq with {0} will probably not work!'.format(type(cond2)))
                 warnings.warn('Using Comparison.eq with {0} will probably not work!'.format(type(cond2)))
+
+    def _reset(self):
+        self._condition_1._reset()
+        self._condition_2._reset()
 
     def _compare(self, other):
         """
@@ -1026,7 +1061,9 @@ class AndCondition(ControlCondition):
         return np.min([self._condition_1.backtrack, self._condition_2.backtrack])
 
     def requires(self):
-        return self._condition_1.requires().update(self._condition_2.requires())
+        req = self._condition_1.requires()
+        req.update(self._condition_2.requires())
+        return req
 
 
 class _CloseCVCondition(ControlCondition):
@@ -1196,7 +1233,7 @@ class _CloseHeadPumpCondition(ControlCondition):
         If True is returned, the pump needs to be closed
         """
         a, b, c = self._pump.get_head_curve_coefficients()
-        if self._pump.speed_timeseries(self._wn.sim_time) != 1.0:
+        if self._pump.speed_timeseries.at(self._wn.sim_time) != 1.0:
             raise NotImplementedError('Pump speeds other than 1.0 are not yet supported.')
         Hmax = a
         dh = self._end_node.head - self._start_node.head
@@ -1206,7 +1243,7 @@ class _CloseHeadPumpCondition(ControlCondition):
 
     def __str__(self):
         a, b, c = self._pump.get_head_curve_coefficients()
-        if self._pump.speed_timeseries(self._wn.sim_time) != 1.0:
+        if self._pump.speed_timeseries.at(self._wn.sim_time) != 1.0:
             raise NotImplementedError('Pump speeds other than 1.0 are not yet supported.')
         Hmax = a
         s = '{0} head - {1} head > {2:.4f}'.format(self._end_node.name, self._start_node.name, Hmax + self._Htol)
@@ -1240,7 +1277,7 @@ class _OpenHeadPumpCondition(ControlCondition):
         If True is returned, the pump needs to be closed
         """
         a, b, c = self._pump.get_head_curve_coefficients()
-        if self._pump.speed_timeseries(self._wn.sim_time) != 1.0:
+        if self._pump.speed_timeseries.at(self._wn.sim_time) != 1.0:
             raise NotImplementedError('Pump speeds other than 1.0 are not yet supported.')
         Hmax = a
         dh = self._end_node.head - self._start_node.head
@@ -1250,7 +1287,7 @@ class _OpenHeadPumpCondition(ControlCondition):
 
     def __str__(self):
         a, b, c = self._pump.get_head_curve_coefficients()
-        if self._pump.speed_timeseries(self._wn.sim_time) != 1.0:
+        if self._pump.speed_timeseries.at(self._wn.sim_time) != 1.0:
             raise NotImplementedError('Pump speeds other than 1.0 are not yet supported.')
         Hmax = a
         s = '{0} head - {1} head <= {2:.4f}'.format(self._end_node.name, self._start_node.name, Hmax + self._Htol)
@@ -1312,7 +1349,7 @@ class _OpenPRVCondition(ControlCondition):
         self._start_node = wn.get_node(self._prv.start_node)
         self._end_node = wn.get_node(self._prv.end_node)
         self._backtrack = 0
-        self._r = 0.0826 * 0.02 * self._prv.diameter ** (-4) * 2.0
+        self._r = 8.0 * self._prv.minor_loss / (9.81 * math.pi**2 * self._prv.diameter**4)
 
     def requires(self):
         return OrderedSet([self._prv, self._start_node, self._end_node])
@@ -1356,7 +1393,7 @@ class _ActivePRVCondition(ControlCondition):
         self._start_node = wn.get_node(self._prv.start_node)
         self._end_node = wn.get_node(self._prv.end_node)
         self._backtrack = 0
-        self._r = 0.0826 * 0.02 * self._prv.diameter ** (-4) * 2.0
+        self._r = 8.0 * self._prv.minor_loss / (9.81 * math.pi**2 * self._prv.diameter**4)
 
     def requires(self):
         return OrderedSet([self._prv, self._start_node, self._end_node])
@@ -1381,6 +1418,137 @@ class _ActivePRVCondition(ControlCondition):
 
     def __str__(self):
         s = 'prv {0} needs to be active'.format(self._prv.name)
+        return s
+
+
+class _ClosePSVCondition(ControlCondition):
+    _Qtol = 2.83168e-6
+
+    def __init__(self, wn, psv):
+        """
+        Parameters
+        ----------
+        wn: wntr.network.WaterNetworkModel
+        psv: wntr.network.Valve
+        """
+        super(_ClosePSVCondition, self).__init__()
+        self._psv = psv
+        self._start_node = wn.get_node(self._psv.start_node)
+        self._end_node = wn.get_node(self._psv.end_node)
+        self._backtrack = 0
+
+    def requires(self):
+        return OrderedSet([self._psv])
+
+    def evaluate(self):
+        if self._psv._internal_status == LinkStatus.Active:
+            if self._psv.flow < -self._Qtol:
+                return True
+            return False
+        elif self._psv._internal_status == LinkStatus.Open:
+            if self._psv.flow < -self._Qtol:
+                return True
+            return False
+        elif self._psv._internal_status == LinkStatus.Closed:
+            return False
+        else:
+            raise RuntimeError('Unexpected PSV _internal_status for valve {0}: {1}.'.format(self._psv,
+                                                                                            self._psv._internal_status))
+
+    def __str__(self):
+        s = 'psv {0} needs to be closed'.format(self._psv.name)
+        return s
+
+
+class _OpenPSVCondition(ControlCondition):
+    _Qtol = 2.83168e-6
+    _Htol = 0.0001524
+
+    def __init__(self, wn, psv):
+        """
+        Parameters
+        ----------
+        wn: wntr.network.WaterNetworkModel
+        psv: wntr.network.Valve
+        """
+        super(_OpenPSVCondition, self).__init__()
+        self._psv = psv
+        self._start_node = wn.get_node(self._psv.start_node)
+        self._end_node = wn.get_node(self._psv.end_node)
+        self._backtrack = 0
+        self._r = 8.0 * self._psv.minor_loss / (9.81 * math.pi**2 * self._psv.diameter**4)
+
+    def requires(self):
+        return OrderedSet([self._psv, self._start_node, self._end_node])
+
+    def evaluate(self):
+        setting = self._psv.setting + self._start_node.elevation
+        if self._psv._internal_status == LinkStatus.Active:
+            if self._psv.flow < -self._Qtol:
+                return False
+            elif self._end_node.head + self._r * abs(self._psv.flow)**2 > setting + self._Htol:
+                return True
+            return False
+        elif self._psv._internal_status == LinkStatus.Open:
+            return False
+        elif self._psv._internal_status == LinkStatus.Closed:
+            if ((self._end_node.head > setting + self._Htol) and
+                    (self._start_node.head > self._end_node.head + self._Htol)):
+                return True
+            return False
+        else:
+            raise RuntimeError('Unexpected PSV _internal_status for valve {0}: {1}.'.format(self._psv,
+                                                                                            self._psv._internal_status))
+
+    def __str__(self):
+        s = 'psv {0} needs to be open'.format(self._psv.name)
+        return s
+
+
+class _ActivePSVCondition(ControlCondition):
+    _Qtol = 2.83168e-6
+    _Htol = 0.0001524
+
+    def __init__(self, wn, psv):
+        """
+        Parameters
+        ----------
+        wn: wntr.network.WaterNetworkModel
+        psv: wntr.network.Valve
+        """
+        self._psv = psv
+        self._start_node = wn.get_node(self._psv.start_node)
+        self._end_node = wn.get_node(self._psv.end_node)
+        self._backtrack = 0
+        self._r = 8.0 * self._psv.minor_loss / (9.81 * math.pi**2 * self._psv.diameter**4)
+
+    def requires(self):
+        return OrderedSet([self._psv, self._start_node, self._end_node])
+
+    def evaluate(self):
+        setting = self._psv.setting + self._start_node.elevation
+        if self._psv._internal_status == LinkStatus.Active:
+            return False
+        elif self._psv._internal_status == LinkStatus.Open:
+            if self._psv.flow < -self._Qtol:
+                return False
+            elif (self._start_node.head < setting - self._Htol):
+                return True
+            return False
+        elif self._psv._internal_status == LinkStatus.Closed:
+            if ((self._end_node.head > setting + self._Htol) and
+                    (self._start_node.head > self._end_node.head + self._Htol)):
+                return False
+            elif ((self._start_node.head >= setting + self._Htol) and
+                  (self._start_node.head > self._end_node.head + self._Htol)):
+                return True
+            return False
+        else:
+            raise RuntimeError('Unexpected PSV _internal_status for valve {0}: {1}.'.format(self._psv,
+                                                                                            self._psv._internal_status))
+
+    def __str__(self):
+        s = 'psv {0} needs to be active'.format(self._psv.name)
         return s
 
 
@@ -1436,7 +1604,7 @@ class _ActiveFCVCondition(ControlCondition):
             return False
         elif self._fcv.flow < -self._Qtol:
             return False
-        elif self._fcv._internal_status == LinkStatus.Open and self._fcv.flow >= self._fcv.setting:
+        elif self._fcv._internal_status == LinkStatus.Open and self._fcv.flow >= self._fcv.setting + self._Qtol:
             return True
         else:
             return False
@@ -1692,6 +1860,9 @@ class ControlBase(six.with_metaclass(abc.ABCMeta, object)):
         else:
             return 'Control'
 
+    def _reset(self):
+        self._condition._reset()
+
     @property
     def condition(self):
         return self._condition
@@ -1775,8 +1946,7 @@ class Rule(ControlBase):
             self._name = ''
         self._control_type = _ControlType.rule
 
-        if isinstance(condition, (TimeOfDayCondition, SimTimeCondition, ValueCondition, TankLevelCondition,
-                                  RelativeCondition)):
+        if isinstance(condition, TankLevelCondition):
             if condition._relation is Comparison.eq:
                 logger.warning('Using Comparison.eq with {0} will probably not work!'.format(type(condition)))
                 warnings.warn('Using Comparison.eq with {0} will probably not work!'.format(type(condition)))
@@ -1881,15 +2051,6 @@ class Control(Rule):
         name: str
             The name of the control
         """
-        # if isinstance(condition, (TimeOfDayCondition, SimTimeCondition)):
-        #     if condition._relation is not Comparison.eq:
-        #         raise ValueError('SimTimeConditions and TimeOfDayConditions used with Control must have a relation of '
-        #                          'Comparison.eq. Otherwise use Rule.')
-        if isinstance(condition, (ValueCondition, TankLevelCondition, RelativeCondition)):
-            if condition._relation is Comparison.eq:
-                logger.warning('Using Comparison.eq with {0} will probably not work!'.format(type(condition)))
-                warnings.warn('Using Comparison.eq with {0} will probably not work!'.format(type(condition)))
-
         self._condition = condition
         self._then_actions = [then_action]
         self._else_actions = []

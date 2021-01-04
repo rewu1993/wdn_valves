@@ -9,9 +9,9 @@ class Segment(object):
         self.pids = []
         self.components = [sid]
         
-        self.risk = None
-        self.direct_cost = None
-        self.unintend_cost = None
+        self.risk = 0
+        self.direct_cost = 0
+        self.unintend_cost = 0
        
     def __str__(self):  
         

@@ -13,15 +13,13 @@ The wntr.metrics.hydraulic module contains hydraulic metrics.
 
 """
 import wntr.network
-from wntr.network.graph import _all_simple_paths
 import numpy as np
 import pandas as pd
 import networkx as nx
 import math
 from collections import Counter
 import sys
-if sys.version_info >= (3,0):
-    from functools import reduce
+from functools import reduce
     
 import logging
 
@@ -37,6 +35,15 @@ def expected_demand(wn, start_time=None, end_time=None, timestep=None):
     wn : wntr WaterNetworkModel
         Water network model
         
+    start_time : int (optional)
+        Start time in seconds, if None then value is set to 0
+        
+    end_time : int  (optional)
+        End time in seconds, if None then value is set to wn.options.time.duration
+
+    timestep : int (optional)
+        Timestep, if None then value is set to wn.options.time.report_timestep
+    
     Returns
     -------
     A pandas DataFrame that contains expected demand in m3/s
@@ -50,11 +57,14 @@ def expected_demand(wn, start_time=None, end_time=None, timestep=None):
         timestep = wn.options.time.report_timestep
         
     exp_demand = {}
-    for name, junc in wn.junctions():
-        exp_demand[name] = junc.demand_timeseries_list.get_values(start_time, 
-                  end_time, timestep) * wn.options.hydraulic.demand_multiplier
-    
     tsteps = np.arange(start_time, end_time+timestep, timestep)
+    for name, junc in wn.junctions():
+        dem = []
+        for ts in tsteps:
+            dem.append(junc.demand_timeseries_list.at(ts, 
+                       multiplier=wn.options.hydraulic.demand_multiplier))
+        exp_demand[name] = dem 
+    
     exp_demand = pd.DataFrame(index=tsteps, data=exp_demand)
     
     return exp_demand
@@ -280,10 +290,10 @@ def entropy(G, sources=None, sinks=None):
             continue
 
         sp = [] # simple path
-        if G.node[nodej]['type']  == 'Junction':
+        if G.nodes[nodej]['type']  == 'Junction':
             for source in sources:
                 if nx.has_path(G, source, nodej):
-                    simple_paths = _all_simple_paths(G,source,target=nodej)
+                    simple_paths = nx.all_simple_paths(G,source,target=nodej)
                     sp = sp + ([p for p in simple_paths])
                     # all_simple_paths was modified to check 'has_path' in the
                     # loop, but this is still slow for large networks
@@ -296,7 +306,8 @@ def entropy(G, sources=None, sinks=None):
             S[nodej] = np.nan # nodej is not connected to any sources
             continue
 
-        sp = np.array(sp)
+        # "dtype=object" is needed to create an array from a list of lists with differnet lengths
+        sp = np.array(sp, dtype=object)
 
         # Uj = set of nodes on the upstream ends of links incident on node j
         Uj = G.predecessors(nodej)
@@ -332,7 +343,7 @@ def entropy(G, sources=None, sinks=None):
         # Equation 7
         S[nodej] = 0
         for idx in range(len(qij)):
-            if qij[idx]/Q[nodej] > 0:
+            if Q[nodej] != 0 and qij[idx]/Q[nodej] > 0:
                 S[nodej] = S[nodej] - \
                     qij[idx]/Q[nodej]*math.log(qij[idx]/Q[nodej]) + \
                     qij[idx]/Q[nodej]*math.log(aij[idx])

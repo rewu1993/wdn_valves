@@ -62,31 +62,49 @@ class ValveRegister(object):
             
 
 class ValveStates(object):
-    def __init__(self,valve_register,N1 = False):
+    def __init__(self,valve_register,pids_white,N1 = False):
         self.vreg = copy.deepcopy(valve_register)
-        self.N1 = N1
-        self.topo_valves = self._adjust2N_1() 
+        self.white_valves = self._get_white_valves(pids_white)
+        self.topo_valves = self._get_topo_valves(N1)
         self.valid_valves = self._init_valid_valves()
         
         self.normal_valves = self._init_valid_valves()
         self.failed_valves = []
 #         self.prev_state = None
-        
+
+    def _get_white_valves(self,pids_white):
+        white_valves = []
+        for white_pid in pids_white:
+            valves = self.vreg.pid2v[white_pid]
+            for v in valves:
+                v.keep_closed = True
+                v.fail = False
+                white_valves.append(v)
+        return white_valves
+
     def _adjust2N_1(self):
         adjust_valves = []
-        if self.N1:
-            for nid, valves in self.vreg.nid2v.items():
-                topo_valve = np.random.choice(valves, 1, replace=False)[0]
+        for nid, valves in self.vreg.nid2v.items():
+            topo_valve = np.random.choice(valves, 1, replace=False)[0]
+            if topo_valve.keep_closed == False:
                 topo_valve.keep_open = True
                 topo_valve.fail = True
                 adjust_valves.append(topo_valve)
         return adjust_valves
     
+    def _get_topo_valves(self,N1):
+        topo_valves = []
+        if N1:
+            n1_valves = self._adjust2N_1()
+            topo_valves += n1_valves
+        return topo_valves
+    
     def _init_valid_valves(self):
         valid_valves = []
         for vid, valve in self.vreg.vid2v.items():
             if valve not in self.topo_valves:
-                valid_valves.append(valve)
+                if valve not in self.white_valves:
+                    valid_valves.append(valve)
         return valid_valves
     
     def _fail_valve(self,vindex):
@@ -95,6 +113,7 @@ class ValveStates(object):
         return valve
     
     def fail_valves(self,nv2fail):
+        np.random.seed()
 #         self.prev_state = copy.deepcopy(self)
         failed_valves = []
         for _ in range(nv2fail):
@@ -122,9 +141,7 @@ class ValveStates(object):
     @property
     def fail_rate(self):
         return 1-len(self.normal_valves)/len(self.valid_valves)
-               
-            
-
+    
 def create_valves(lid2npair):
     vid = 0
     valves = []
@@ -135,11 +152,11 @@ def create_valves(lid2npair):
             valves.append(v)
     return valves
 
-def create_valvestates(lid2npair,N1):
+def create_valvestates(lid2npair,src_nids,N1):
     valves = create_valves(lid2npair)
     vreg = ValveRegister()
     vreg.register(valves)
-    vstates = ValveStates(vreg,N1)
+    vstates = ValveStates(vreg,src_nids,N1)
     return vstates
         
         
