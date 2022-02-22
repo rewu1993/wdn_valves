@@ -18,7 +18,7 @@ This file contains a demonstration that generate arbitrary shaped WDNs and perfo
 The main purpose of this code is to understand the mechanism of how isolation valve failure impact WDN hydraulic performance. 
 
 <p align="center">
-<img src="https://github.com/rewu1993/valves/blob/master/imgs/network_generation_workflow.png" alt="high_level" class="design-primary" width="600px">
+<img src="https://github.com/rewu1993/wdn_valves/blob/master/imgs/network_generation_workflow.png" alt="high_level" class="design-primary" width="600px">
 </p>
 
 
